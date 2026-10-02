@@ -163,7 +163,7 @@ select, button, input[type=file] {
 .mapnode-endpoint { fill: #222; stroke: #fff; stroke-width: 1.5; }
 .mapnode-resupply { stroke: #2CA02C; stroke-width: 2; }
 
-.maplabel { font-size: 9px; fill: var(--fg); }
+.maplabel { font-size: 10px; font-weight: bold; fill: var(--fg); paint-order: stroke; stroke: var(--bg); stroke-width: 3px; }
 
 .maplegend { max-width: 700px; margin: 0 auto 20px auto; font-size: 12px; display: flex; flex-wrap: wrap; gap: 4px 14px; }
 .maplegend span { display: inline-flex; align-items: center; gap: 4px; }
@@ -884,9 +884,27 @@ function GetUsedLink(from, to, goVia) {
 
 const dayColors = ['#D62728', '#1F77B4', '#2CA02C', '#9467BD', '#FF7F0E', '#17BECF', '#E377C2', '#8C564B', '#BCBD22', '#7F7F7F'];
 
+let allPlaceCoords = null;
+
+function GetAllPlaceCoords() {
+  if (allPlaceCoords) return allPlaceCoords;
+
+  allPlaceCoords = {};
+
+  for (var key in trailGeometry) {
+    var parts = key.split('|');
+    var geom = trailGeometry[key];
+    if (!(parts[0] in allPlaceCoords)) allPlaceCoords[parts[0]] = geom[0];
+    if (!(parts[1] in allPlaceCoords)) allPlaceCoords[parts[1]] = geom[geom.length - 1];
+  }
+
+  return allPlaceCoords;
+}
+
 function BuildMap() {
   if (!mapBounds) InitMapProjection();
 
+  var allCoords = GetAllPlaceCoords();
   var usedPlaces = new Set();
   var usedEdgeKeys = new Set();
 
@@ -940,24 +958,38 @@ function BuildMap() {
     }
   }
 
-  // Node markers for places currently in the itinerary.
+  // Small hoverable dot for every known stop, whether it's in your plan or not.
+  for (var place in allCoords) {
+    if (usedPlaces.has(place)) continue;
+
+    var [x, y] = ProjectPoint(allCoords[place][0], allCoords[place][1]);
+    var cls = 'mapnode' + (isResupply[place] ? ' mapnode-resupply' : '');
+
+    svg += '<circle class="' + cls + '" cx="' + x.toFixed(1) + '" cy="' + y.toFixed(1) + '" r="2.6"><title>' + place.replace(/&/g, '&amp;') + '</title></circle>';
+  }
+
+  // Bigger, coloured markers for places currently in the itinerary, drawn on top.
   usedPlaces.forEach(place => {
-    var coords = null;
+    if (!(place in allCoords)) return;
 
-    for (var key in trailGeometry) {
-      var parts = key.split('|');
-      if (parts[0] === place) { coords = trailGeometry[key][0]; break; }
-      if (parts[1] === place) { coords = trailGeometry[key][trailGeometry[key].length - 1]; break; }
-    }
-
-    if (!coords) return;
-
-    var [x, y] = ProjectPoint(coords[0], coords[1]);
+    var [x, y] = ProjectPoint(allCoords[place][0], allCoords[place][1]);
     var isEndpoint = (place === trip.StartTrailhead || place === trip.EndTrailhead);
     var cls = isEndpoint ? 'mapnode-endpoint' : 'mapnode-used';
     if (isResupply[place]) cls += ' mapnode-resupply';
 
     svg += '<circle class="' + cls + '" cx="' + x.toFixed(1) + '" cy="' + y.toFixed(1) + '" r="' + (isEndpoint ? 5 : 3.5) + '"><title>' + place.replace(/&/g, '&amp;') + '</title></circle>';
+  });
+
+  // Text labels for the major villages, so the map reads without hovering.
+  placeNames['Major Villages'].forEach(place => {
+    if (!(place in allCoords)) return;
+
+    var [x, y] = ProjectPoint(allCoords[place][0], allCoords[place][1]);
+    var label = place.split(' (')[0];
+    var dx = (label === 'Chamonix-Mont-Blanc') ? -4 : 6;
+    var anchor = (dx < 0) ? 'end' : 'start';
+
+    svg += '<text class="maplabel" x="' + (x + dx).toFixed(1) + '" y="' + (y - 6).toFixed(1) + '" text-anchor="' + anchor + '">' + label.replace(/&/g, '&amp;') + '</text>';
   });
 
   svg += '</svg>';
@@ -966,7 +998,8 @@ function BuildMap() {
 
   document.getElementById('maplegend').innerHTML =
     '<span><span class="swatch" style="background:#D62728"></span>day 1 colour (cycles through ' + dayColors.length + ' colours)</span>' +
-    '<span>&#9679; stop in your plan</span>' +
+    '<span style="color:#D62728">&#9679;</span><span>stop in your plan</span>' +
+    '<span style="opacity:0.6">&#9675;</span><span>other refuge (hover for name)</span>' +
     '<span>&#9679;<span style="color:#2CA02C">&#9711;</span> resupply town</span>' +
     '<span>- - - dashed = variant route</span>';
 }
